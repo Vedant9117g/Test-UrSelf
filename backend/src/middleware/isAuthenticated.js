@@ -16,13 +16,7 @@ const isAuthenticated = async (req, res, next) => {
     }
 
     req.user = user;
-
-    // Ensure the user is either a "captain" or has a "both" role
-    if (req.originalUrl.includes("/accept") || req.originalUrl.includes("/reject")) {
-      if (user.role !== "captain" && user.role !== "both") {
-        return res.status(403).json({ message: "Access denied. Only captains can accept/reject rides." });
-      }
-    }
+    
 
     next();
   } catch (error) {

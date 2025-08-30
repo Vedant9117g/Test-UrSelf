@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true },
+    phone: { type: String, required: true, unique: true },
     password: { type: String, required: true, minlength: 6 },
 
     role: {
@@ -13,13 +14,13 @@ const userSchema = new mongoose.Schema(
       default: "student",
     },
 
-    exams: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Exam",
-      },
-    ],
+    examType: {
+      type: String,
+      enum: ["JEE", "GATE"], // 👈 directly tied to your Exam schema "type"
+      required: true,
+    },
 
+    exams: [{ type: mongoose.Schema.Types.ObjectId, ref: "Exam" }],
     bookmarks: [{ type: mongoose.Schema.Types.ObjectId, ref: "Question" }],
     solvedQuestions: [{ type: mongoose.Schema.Types.ObjectId, ref: "Question" }],
     discussionPosts: [{ type: mongoose.Schema.Types.ObjectId, ref: "Discussion" }],
