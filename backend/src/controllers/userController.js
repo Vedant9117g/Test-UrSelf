@@ -1,43 +1,40 @@
 const { uploadMedia, deleteMediaFromCloudinary } = require("../utils/cloudinary");
 const User = require("../models/User");
 const Exam = require("../models/Exam");
-const Question = require("../models/Question"); 
+const Question = require("../models/Question");
 const Discussion = require("../models/Discussion");
 const bcrypt = require("bcryptjs");
 const generateToken = require("../utils/generateToken");
 
 // REGISTER
 const register = async (req, res) => {
-    try {
-        const { name, email, password, phone, role, examType } = req.body;
+  try {
+    const { name, email, password, phone, role, examType } = req.body;
 
-        if (!name || !email || !password || !phone || !role) {
-            return res.status(400).json({ message: "All fields are required" });
-        }
-
-        if (role === "student" && !examType) {
-            return res.status(400).json({ message: "Exam type is required for students" });
-        }
-
-        const userExists = await User.findOne({ email });
-        if (userExists)
-            return res.status(400).json({ message: "User already exists" });
-
-        const user = await User.create({
-            name,
-            email,
-            phone,
-            password,
-            role,
-            examType: role === "student" ? examType : null,
-        });
-
-        return generateToken(res, user, "User registered successfully");
-    } catch (error) {
-        console.error("Register Error:", error);
-        res.status(500).json({ message: error.message });
+    if (!name || !email || !password || !phone || !role || !examType) {
+      return res.status(400).json({ message: "All fields are required" });
     }
+
+    if (!["student", "admin", "mentor"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role selected" });
+    }
+
+    if (!["JEE", "GATE"].includes(examType)) {
+      return res.status(400).json({ message: "Invalid exam type selected" });
+    }
+
+    const userExists = await User.findOne({ email });
+    if (userExists) return res.status(400).json({ message: "User already exists" });
+
+    const user = await User.create({ name, email, phone, password, role, examType });
+
+    return generateToken(res, user, "User registered successfully");
+  } catch (error) {
+    console.error("Register Error:", error);
+    res.status(500).json({ message: error.message });
+  }
 };
+
 
 // LOGIN
 const login = async (req, res) => {

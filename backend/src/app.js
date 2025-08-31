@@ -12,6 +12,18 @@ dotenv.config();
 
 const app = express();
 
+
+const allowedOrigins = [
+  "http://localhost:5173", // Local development
+];
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true, 
+  })
+);
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
