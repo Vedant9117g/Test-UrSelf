@@ -1,45 +1,45 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { themeStyles } from "./themeStyles"; // hybrid theme styles
 
-const initialState = {
-  theme: "system",
-  setTheme: () => null,
-};
+const ThemeContext = createContext();
 
-const ThemeProviderContext = createContext(initialState);
+export const ThemeProvider = ({ children }) => {
+  const [theme, setTheme] = useState("light");
 
-export function ThemeProvider({ children, defaultTheme = "system", storageKey = "vite-ui-theme" }) {
-  const [theme, setTheme] = useState(() => localStorage.getItem(storageKey) || defaultTheme);
-
+  // Detect saved theme or fallback to system preference
   useEffect(() => {
-    const root = window.document.documentElement;
-    root.classList.remove("light", "dark");
-
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-      root.classList.add(systemTheme);
-      return;
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme && themeStyles[savedTheme]) {
+      setTheme(savedTheme);
+    } else {
+      const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      setTheme(prefersDark ? "dark" : "light");
     }
+  }, []);
 
-    root.classList.add(theme);
+  // Persist theme in localStorage
+  useEffect(() => {
+    localStorage.setItem("theme", theme);
   }, [theme]);
 
-  const value = {
-    theme,
-    setTheme: (newTheme) => {
-      localStorage.setItem(storageKey, newTheme);
+  const toggleTheme = (newTheme) => {
+    if (themeStyles[newTheme]) {
       setTheme(newTheme);
-    },
+    }
   };
 
   return (
-    <ThemeProviderContext.Provider value={value}>
+    <ThemeContext.Provider
+      value={{
+        theme,
+        setTheme: toggleTheme,
+        styles: themeStyles[theme], // ✅ expose only active theme styles
+        themeStyles, // ✅ also expose full theme list for buttons
+      }}
+    >
       {children}
-    </ThemeProviderContext.Provider>
+    </ThemeContext.Provider>
   );
-}
-
-export const useTheme = () => {
-  const context = useContext(ThemeProviderContext);
-  if (!context) throw new Error("useTheme must be used within a ThemeProvider");
-  return context;
 };
+
+export const useTheme = () => useContext(ThemeContext);
