@@ -142,18 +142,18 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true },
     phone: { type: String, required: true, unique: true },
-    password: { type: String, required: true, minlength: 6 },
+    password: { type: String, required: true, minlength: 3 },
 
     role: {
       type: String,
-      enum: ["student", "admin", "mentor"],
-      default: "student",
+      enum: ["student", "admin", "mentor"], // allowed roles
+      required: true,
     },
 
     examType: {
       type: String,
-      enum: ["JEE", "GATE"], // 👈 directly tied to your Exam schema "type"
-      required: true,
+      enum: ["JEE", "GATE"], // exam types
+      required: true, // all roles must select one
     },
 
     exams: [{ type: mongoose.Schema.Types.ObjectId, ref: "Exam" }],
