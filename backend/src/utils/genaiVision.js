@@ -5,38 +5,49 @@ require("dotenv").config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-async function extractQuestionFromImage(base64Image) {
+/**
+ * Extract structured question data (with answer key, solution, hint)
+ * from a question screenshot using Gemini Vision API
+ */
+async function extractQuestionFromImage(imageBuffer) {
   const prompt = `
-You are given a screenshot of a competitive exam MCQ.
-Extract it as JSON only, with this structure:
+You are given a screenshot of a competitive exam question.
+Extract the details in strict JSON format.
 
-{
-  "questionText": "...",
-  "options": [
-    { "text": "...", "isCorrect": false },
-    { "text": "...", "isCorrect": true }
-  ],
-  "difficulty": "easy|medium|hard",
-  "tags": ["topic1", "topic2"],
-  "year": "YYYY or unknown",
-  "source": "PYQ or Mock or Unknown"
-}
+Fields:
+- questionText: string
+- options: array of { text: string, isCorrect: boolean }
+- difficulty: "easy" | "medium" | "hard"
+- tags: array of strings
+- year: string or "unknown"
+- source: "PYQ" | "Mock" | "Unknown"
+- answerKey: string (correct option text)
+- solution: string (step by step explanation)
+- hint: string (short guiding tip)
+
+Return ONLY valid JSON, no markdown, no extra text.
 `;
 
-  const result = await model.generateContent([
-    { inlineData: { data: base64Image, mimeType: "image/png" } },
-    { text: prompt }
-  ]);
-
-  let text = result.response.text();
-
-  // 🔥 Strip ```json fences if present
-  text = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const base64Image = imageBuffer.toString("base64");
 
   try {
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType: "image/png", data: base64Image } }
+          ]
+        }
+      ],
+      generationConfig: { responseMimeType: "application/json" }
+    });
+
+    const text = result.response.text();
     return JSON.parse(text);
   } catch (err) {
-    console.error("❌ Still not valid JSON:", text);
+    console.error("❌ Image parse error:", err.message);
     throw new Error("Failed to parse Gemini response as JSON");
   }
 }
