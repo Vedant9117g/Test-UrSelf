@@ -5,6 +5,7 @@ import MainLayout from "./layout/MainLayout";
 import { ThemeProvider } from "./components/ThemeProvider";
 import Landing from "./pages/Landing";
 import MentorUploadPDF from "./pages/MentorUploadPDF";
+import MentorUploadImage from "./pages/MentorUploadImage";
 
 const appRouter = createBrowserRouter([
   {
@@ -26,6 +27,10 @@ const appRouter = createBrowserRouter([
       {
         path: "pdf-upload",
         element: <MentorUploadPDF />,
+      },
+      {
+        path: "img-upload",
+        element: <MentorUploadImage />,
       },
     ],
   },

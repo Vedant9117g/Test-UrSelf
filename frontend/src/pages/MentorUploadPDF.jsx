@@ -6,42 +6,38 @@ const MentorUploadPDF = () => {
   const [parsedQuestions, setParsedQuestions] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Handle PDF file selection
   const handleFileChange = (e) => {
     setPdfFile(e.target.files[0]);
   };
 
-  // Upload PDF to backend and get parsed questions
   const handleUpload = async () => {
     if (!pdfFile) return alert("Please select a PDF file");
 
     const formData = new FormData();
-    formData.append("pdf", pdfFile); // must match multer .single("pdf")
+    formData.append("pdf", pdfFile);
 
     try {
       setLoading(true);
 
-      // Use full backend URL if frontend dev server differs
       const res = await axios.post(
         "http://localhost:5000/api/pdfs/upload-pdf",
         formData,
         {
           headers: { "Content-Type": "multipart/form-data" },
-          withCredentials: true, // needed for cookie auth
+          withCredentials: true,
         }
       );
 
-      alert(`PDF uploaded successfully: ${res.data.pdfUrl}`);
+      alert("PDF parsed successfully ✅");
       setParsedQuestions(res.data.parsedQuestions || []);
     } catch (err) {
       console.error("Upload error:", err);
-      alert("Failed to upload PDF. Make sure backend is running and route is correct.");
+      alert("Failed to upload PDF. Check backend logs.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Approve and save parsed questions to DB
   const handleApproveAndSave = async () => {
     if (!parsedQuestions.length) return alert("No questions to save");
 
@@ -54,19 +50,19 @@ const MentorUploadPDF = () => {
         { withCredentials: true }
       );
 
-      alert("Questions saved successfully!");
+      alert("Questions saved successfully 🎉");
       setParsedQuestions([]);
       setPdfFile(null);
     } catch (err) {
       console.error("Save error:", err);
-      alert("Failed to save questions. Check backend logs.");
+      alert("Failed to save questions.");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto p-6 bg-gray-700 h-[90vh]">
+    <div className="max-w-3xl mx-auto p-6 bg-gray-700 h-[90vh] text-white">
       <h1 className="text-2xl font-bold mb-4">Upload PDF Questions</h1>
 
       <input type="file" accept="application/pdf" onChange={handleFileChange} name="pdf" />
@@ -83,7 +79,7 @@ const MentorUploadPDF = () => {
           <h2 className="text-xl font-semibold mb-2">Parsed Questions Preview</h2>
           <ul className="space-y-4">
             {parsedQuestions.map((q, idx) => (
-              <li key={idx} className="border p-3 rounded">
+              <li key={idx} className="border p-3 rounded bg-gray-800">
                 <p><strong>Question:</strong> {q.questionText}</p>
                 <p><strong>Options:</strong> {q.options?.map((o) => o.text).join(", ")}</p>
                 <p><strong>Difficulty:</strong> {q.difficulty}</p>

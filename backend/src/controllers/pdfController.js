@@ -1,42 +1,39 @@
-const fs = require("fs");
-const { uploadMedia } = require("../utils/cloudinary");
+// controllers/pdfController.js
 const pdfParse = require("pdf-parse");
 const { extractQuestionJSON } = require("../utils/genai");
 
 exports.uploadPDF = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No PDF file uploaded" });
-    }
+    if (!req.file) return res.status(400).json({ error: "No PDF uploaded" });
 
-    // 1️⃣ Upload PDF to Cloudinary
-    const cloudinaryResponse = await uploadMedia(req.file.path);
-    const pdfUrl = cloudinaryResponse.secure_url;
+    // Extract text from memory (multer.memoryStorage())
+    const data = await pdfParse(req.file.buffer);
+    const pdfText = data.text || "";
 
-    // 2️⃣ Read file from disk into buffer
-    const pdfBuffer = fs.readFileSync(req.file.path);
+    // Split by question blocks like "Q.1", "Q.2", etc.
+    // Captures a question header and content until the next "Q.N" or end of file.
+    const blocks = pdfText.match(/Q\.\s*\d+[\s\S]*?(?=Q\.\s*\d+|$)/g) || [];
 
-    // 3️⃣ Parse PDF text
-    const pdfText = (await pdfParse(pdfBuffer)).text;
-
-    // 4️⃣ Split into raw questions
-    const rawQuestions = pdfText.split(/\n\n/);
     const parsedQuestions = [];
+    for (const block of blocks) {
+      const q = block.replace(/^Q\.\s*\d+\s*/i, "").trim(); // remove the "Q.n" prefix
+      if (!q) continue;
 
-    for (let q of rawQuestions) {
-      if (!q.trim()) continue;
       try {
         const parsed = await extractQuestionJSON(q);
         parsedQuestions.push(parsed);
       } catch (err) {
-        console.error("❌ Failed to parse question:", q, err.message);
+        console.warn("⚠️ Failed to parse one block (continuing):", err.message);
       }
     }
 
-    // 5️⃣ Return questions for frontend preview
-    res.json({ pdfUrl, parsedQuestions });
+    res.json({
+      success: true,
+      totalExtracted: parsedQuestions.length,
+      parsedQuestions
+    });
   } catch (err) {
     console.error("❌ PDF Upload Error:", err);
-    res.status(500).json({ error: "Failed to upload PDF", details: err.message });
+    res.status(500).json({ error: "Failed to process PDF", details: err.message });
   }
 };
