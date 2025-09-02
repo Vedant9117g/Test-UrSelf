@@ -1,54 +1,50 @@
 // utils/genai.js
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-const dotenv = require("dotenv");
-dotenv.config();
+require("dotenv").config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
 /**
- * Extracts structured question JSON from raw question text using Gemini
- * @param {string} rawQuestion - The text of the question
- * @returns {object} - Parsed question in JSON format
+ * Extract structured question JSON from raw question text
+ * Includes answerKey, solution, hint
  */
-const extractQuestionJSON = async (rawQuestion) => {
+async function extractQuestionJSON(rawQuestion) {
   const prompt = `
-You are given a raw exam question. Extract structured details in JSON:
+You are given a competitive exam question. 
+Extract details and return ONLY valid JSON (no markdown, no extra text).
 
-{
-  "questionText": "...",
-  "options": [{ "text": "...", "isCorrect": true/false }],
-  "difficulty": "easy|medium|hard",
-  "tags": ["..."],
-  "year": "unknown or actual year",
-  "source": "PYQ|Mock|Unknown",
-  "answerKey": "correct option text",
-  "solution": "step by step explanation with formulas where needed",
-  "hint": "short guiding tip"
-}
+Fields:
+- questionText: string
+- options: array of { text: string, isCorrect: boolean }
+- difficulty: "easy" | "medium" | "hard"
+- tags: array of topic strings
+- year: string (YYYY or "unknown")
+- source: "PYQ" | "Mock" | "Unknown"
+- answerKey: string (the correct option text)
+- solution: string (step-by-step, structured explanation with formulas, written in simple language, include real-world analogies/examples)
+- hint: string (a short guiding tip for solving)
 
-Return ONLY valid JSON, no extra text.
 Question:
 ${rawQuestion}
-  `;
+`;
 
   try {
     const result = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: { responseMimeType: "application/json" },
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0,
+        responseMimeType: "application/json"
+      }
     });
 
     const text = result.response.text();
+
     return JSON.parse(text);
   } catch (err) {
-    console.error("❌ Error parsing question with Gemini:", err.message);
-    throw err;
+    console.error("❌ Gemini parse error:", err.message);
+    throw new Error("Failed to parse Gemini response as JSON");
   }
-};
+}
 
 module.exports = { extractQuestionJSON };

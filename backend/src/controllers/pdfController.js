@@ -1,42 +1,71 @@
- const fs = require("fs");
-const { uploadMedia } = require("../utils/cloudinary");
 const pdfParse = require("pdf-parse");
 const { extractQuestionJSON } = require("../utils/genai");
 
+let pdfQuestionsCache = [];
+
 exports.uploadPDF = async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No PDF file uploaded" });
+    if (!req.file) return res.status(400).json({ error: "No PDF uploaded" });
+
+    // ✅ Parse PDF buffer
+    const data = await pdfParse(req.file.buffer);
+    const pdfText = data.text || "";
+
+    // Split into question blocks like Q. 1, Q. 2 ...
+    const blocks = pdfText.match(/Q\.\s*\d+[\s\S]*?(?=Q\.\s*\d+|$)/g) || [];
+    pdfQuestionsCache = blocks.map((b) =>
+      b.replace(/^Q\.\s*\d+\s*/i, "").trim()
+    );
+
+    console.log("📄 Extracted Questions:", pdfQuestionsCache.length);
+
+    res.json({
+      success: true,
+      totalQuestions: pdfQuestionsCache.length,
+      message:
+        "PDF uploaded. Use /api/pdfs/parse-batch to fetch parsed questions in chunks.",
+    });
+  } catch (err) {
+    console.error("❌ PDF Upload Error:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to process PDF", details: err.message });
+  }
+};
+
+// ✅ Parse batch endpoint
+exports.parseBatch = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const batch = parseInt(req.query.batch) || 1;
+
+    const start = (batch - 1) * limit;
+    const end = start + limit;
+
+    const selectedBlocks = pdfQuestionsCache.slice(start, end);
+    if (!selectedBlocks.length) {
+      return res.json({ success: true, parsedQuestions: [], hasMore: false });
     }
 
-    // 1️⃣ Upload PDF to Cloudinary
-    const cloudinaryResponse = await uploadMedia(req.file.path);
-    const pdfUrl = cloudinaryResponse.secure_url;
-
-    // 2️⃣ Read file from disk into buffer
-    const pdfBuffer = fs.readFileSync(req.file.path);
-
-    // 3️⃣ Parse PDF text
-    const pdfText = (await pdfParse(pdfBuffer)).text;
-
-    // 4️⃣ Split into raw questions
-    const rawQuestions = pdfText.split(/\n\n/);
     const parsedQuestions = [];
-
-    for (let q of rawQuestions) {
-      if (!q.trim()) continue;
+    for (const q of selectedBlocks) {
       try {
         const parsed = await extractQuestionJSON(q);
         parsedQuestions.push(parsed);
       } catch (err) {
-        console.error("❌ Failed to parse question:", q, err.message);
+        console.warn("⚠️ Failed to parse block:", err.message);
       }
     }
 
-    // 5️⃣ Return questions for frontend preview
-    res.json({ pdfUrl, parsedQuestions });
+    res.json({
+      success: true,
+      parsedQuestions,
+      hasMore: end < pdfQuestionsCache.length,
+    });
   } catch (err) {
-    console.error("❌ PDF Upload Error:", err);
-    res.status(500).json({ error: "Failed to upload PDF", details: err.message });
+    console.error("❌ Batch Parse Error:", err);
+    res
+      .status(500)
+      .json({ error: "Failed to parse batch", details: err.message });
   }
 };
