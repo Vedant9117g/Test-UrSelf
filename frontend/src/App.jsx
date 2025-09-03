@@ -6,6 +6,7 @@ import { ThemeProvider } from "./components/ThemeProvider";
 import Landing from "./pages/Landing";
 import MentorUploadPDF from "./pages/MentorUploadPDF";
 import MentorUploadImage from "./pages/MentorUploadImage";
+import MultiQUpload from "./pages/MultiQUpload";
 
 const appRouter = createBrowserRouter([
   {
@@ -31,6 +32,10 @@ const appRouter = createBrowserRouter([
       {
         path: "img-upload",
         element: <MentorUploadImage />,
+      },
+      {
+        path: "qns-upload",
+        element: <MultiQUpload />,
       },
     ],
   },

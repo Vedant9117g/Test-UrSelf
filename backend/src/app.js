@@ -9,6 +9,7 @@ const cookieParser = require("cookie-parser");
 const userRoutes = require("./routes/userRoutes");
 const pdfRoutes = require("./routes/pdfRoutes");
 const imageRoutes = require("./routes/imageRoutes");
+const multiqRoutes = require("./routes/multiQRoutes");
 
 dotenv.config();
 
@@ -41,6 +42,7 @@ if (process.env.NODE_ENV === "development") {
 app.use("/api/users", userRoutes);
 app.use("/api/pdfs", pdfRoutes);
 app.use("/api/images", imageRoutes);
+app.use("/api/multiq", multiqRoutes);
 
 // Health check route
 app.get("/", (req, res) => {

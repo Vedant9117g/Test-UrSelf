@@ -5,13 +5,23 @@ require("dotenv").config();
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-// Helper: remove triple-backticks and surrounding noise
-function cleanModelText(text) {
-  if (!text) return text;
-  return text.replace(/```(?:json)?/g, "").replace(/```/g, "").trim();
+/** Infer mime type from buffer (basic PNG/JPEG detection) */
+function detectMimeType(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return "image/png";
+  const png = buf.slice(0, 8).equals(Buffer.from([0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A]));
+  const jpg = buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF;
+  if (png) return "image/png";
+  if (jpg) return "image/jpeg";
+  return "image/png";
 }
 
-// fallback: extract first balanced JSON object
+/** Remove markdown fencing if model returns code blocks */
+function cleanModelText(text) {
+  if (!text) return text;
+  return text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+}
+
+/** Fallback: extract first balanced JSON object from arbitrary text */
 function extractFirstJson(text) {
   const start = text.indexOf("{");
   if (start === -1) throw new Error("No JSON object start found");
@@ -34,81 +44,41 @@ function extractFirstJson(text) {
   throw new Error("No balanced JSON object found");
 }
 
-// Try to extract numeric values from question text if model doesn't
-function extractNumbersFromText(text) {
-  const out = {};
-
-  const rpmMatch = text.match(/(\d{3,5})\s*RPM/i) || text.match(/rotation speed of\s*(\d{3,5})/i);
-  if (rpmMatch) out.rotationSpeed = parseFloat(rpmMatch[1]);
-
-  const seekMatch = text.match(/seek time of\s*([\d.]+)\s*milliseconds/i) || text.match(/average seek time of\s*([\d.]+)\s*ms/i);
-  if (seekMatch) out.avgSeekMs = parseFloat(seekMatch[1]);
-
-  const sectorsPerTrackMatch = text.match(/(\d{1,4})\s*sectors\/track/i);
-  if (sectorsPerTrackMatch) out.sectorsPerTrack = parseInt(sectorsPerTrackMatch[1]);
-
-  const sectorSizeMatch = text.match(/(\d{2,6})-?byte\s*sectors/i) || text.match(/(\d{2,6})\s*bytes\/sector/i) || text.match(/(\d{2,6})\s*byte sectors/i);
-  if (sectorSizeMatch) out.sectorSizeBytes = parseInt(sectorSizeMatch[1]);
-
-  const totalSectorsMatch = text.match(/file has content stored in\s*(\d{1,6})\s*sectors/i) || text.match(/(\d{1,6})\s*sectors located/i);
-  if (totalSectorsMatch) out.totalSectors = parseInt(totalSectorsMatch[1]);
-
-  return out;
-}
-
-// Deterministic computation for disk read example (and similar)
-function computeDiskTotalSeconds(parsed) {
-  // prefer numeric fields from parsed, otherwise try to extract from questionText
-  const q = parsed;
-  const textNumbers = extractNumbersFromText(q.questionText || "");
-  const rpm = q.rotationSpeed || textNumbers.rotationSpeed || q.numericFields?.rotationSpeed;
-  const avgSeekMs = q.avgSeekMs || textNumbers.avgSeekMs || q.numericFields?.avgSeekMs;
-  const sectorsPerTrack = q.sectorsPerTrack || textNumbers.sectorsPerTrack || q.numericFields?.sectorsPerTrack;
-  const sectorSizeBytes = q.sectorSizeBytes || textNumbers.sectorSizeBytes || q.numericFields?.sectorSizeBytes;
-  const totalSectors = q.totalSectors || textNumbers.totalSectors || q.numericFields?.totalSectors;
-
-  if (!rpm || !avgSeekMs || !sectorsPerTrack || !sectorSizeBytes || !totalSectors) {
-    return null; // insufficient data to compute
+/** Very generic quantity extractor: numbers + optional units */
+function extractQuantitiesFromText(text) {
+  if (!text) return [];
+  const quantities = [];
+  // e.g., 5400 RPM, 10 ms, 2.5 s, 4 KB, 512 bytes, 3.3 V, 2 A, 50 Ω, 2.4 GHz, 10%, 5 km/h, 20 m/s
+  const regex = /(\d+(?:\.\d+)?)\s*(rpm|rps|ms|s|sec|seconds|minutes|min|hrs|hours|kb|mb|gb|tb|bytes|byte|b|v|a|w|ohm|Ω|hz|khz|mhz|ghz|%|km\/h|m\/s|m|cm|mm|km)?\b/gi;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    const value = parseFloat(match[1]);
+    const unit = (match[2] || "").toLowerCase();
+    // Skip lone integers that look like question numbers if right next to "q" or "question"
+    const ctx = text.slice(Math.max(0, match.index - 6), match.index + (match[0]?.length || 0) + 6).toLowerCase();
+    if (/q\.?\s*$|question\s*$/i.test(ctx)) continue;
+    quantities.push({ value, unit: unit || null, span: match[0] });
   }
-
-  // compute
-  const revsPerSec = rpm / 60.0;
-  const revolutionTimeMs = 1000.0 / revsPerSec; // ms per revolution
-  const avgRotationalLatencyMs = revolutionTimeMs / 2.0;
-  const bytesPerRevolution = sectorsPerTrack * sectorSizeBytes;
-  const bytesPerSecond = bytesPerRevolution * revsPerSec;
-  const totalBytes = totalSectors * sectorSizeBytes;
-  const transferTimeSec = totalBytes / (bytesPerSecond || 1); // seconds
-
-  // per-sector transfer time in ms:
-  const transferPerSectorMs = (sectorSizeBytes / (bytesPerSecond || 1)) * 1000.0;
-
-  const perSectorMs = (avgSeekMs || 0) + (avgRotationalLatencyMs || 0) + transferPerSectorMs;
-  const totalTimeMs = perSectorMs * totalSectors + (transferTimeSec * 1000 - transferPerSectorMs * totalSectors); 
-  // the formula above avoids double counting transfer: we use perSectorMs except total transfer is transferTimeSec,
-  // but perSectorMs includes transferPerSectorMs added totalSectors times; simpler: approximate as:
-  // totalTimeMs ≈ totalSectors * (avgSeekMs + avgRotationalLatencyMs) + transferTimeSec*1000
-  const approxTotalMs = (avgSeekMs + avgRotationalLatencyMs) * totalSectors + transferTimeSec * 1000.0;
-
-  // Return both exact computed and approx
-  return {
-    rotationSpeedRPM: rpm,
-    avgSeekMs,
-    sectorsPerTrack,
-    sectorSizeBytes,
-    totalSectors,
-    bytesPerSecond,
-    totalBytes,
-    transferTimeSec,
-    approxTotalSeconds: Number((approxTotalMs / 1000.0).toFixed(2))
-  };
+  return quantities;
 }
 
 /**
- * Extract structured question JSON from an image (buffer)
- * Returns object with fields: questionText, options, difficulty, tags, year, source,
- * answerKey, formulas(array), solution { steps:[], explanation }, hint, numericFields (optional),
- * computed (optional) with computed results.
+ * Extract structured question JSON from an image (buffer).
+ * Returns:
+ * {
+ *   questionText: string,
+ *   options: [{ text: string, isCorrect: boolean|null }],
+ *   difficulty: "easy"|"medium"|"hard"|"unknown",
+ *   tags: string[],
+ *   year: string|"unknown",
+ *   source: "PYQ"|"Mock"|"Unknown",
+ *   answerKey: string|null,
+ *   formulas: [{ description, expression }],
+ *   solution: { steps: string[], explanation: string },
+ *   hint: string,
+ *   quantities: [{ value:number, unit:string|null, span:string }],
+ *   computed: null
+ * }
  */
 async function extractQuestionFromImage(imageBuffer) {
   const prompt = `
@@ -134,9 +104,10 @@ Return ONLY valid JSON (no markdown, no commentary) with fields:
 If the question contains numeric parameters (like rotation speed, seek time, sectors/track, sector size, number of sectors), extract them into numericFields. If possible, compute the deterministic numeric answer (for disk-reading time etc.) and put it under computed.
 
 IMPORTANT: Respond with one single valid JSON object only.
-`;
+`.trim();
 
   const base64Image = imageBuffer.toString("base64");
+  const mimeType = detectMimeType(imageBuffer);
 
   try {
     const result = await model.generateContent({
@@ -145,7 +116,7 @@ IMPORTANT: Respond with one single valid JSON object only.
           role: "user",
           parts: [
             { text: prompt },
-            { inlineData: { mimeType: "image/png", data: base64Image } }
+            { inlineData: { mimeType, data: base64Image } }
           ]
         }
       ],
@@ -155,67 +126,46 @@ IMPORTANT: Respond with one single valid JSON object only.
     let text = result.response.text();
     text = cleanModelText(text);
 
-    // Try parse JSON, fallback to first JSON block
+    let parsed;
     try {
-      const parsed = JSON.parse(text);
-
-      // If numericFields missing, try to extract from questionText
-      if ((!parsed.numericFields || Object.keys(parsed.numericFields).length === 0) && parsed.questionText) {
-        parsed.numericFields = extractNumbersFromText(parsed.questionText);
-      }
-
-      // If model didn't give computed, try to compute locally
-      if (!parsed.computed) {
-        const comp = computeDiskTotalSeconds({ ...parsed, ...parsed.numericFields });
-        if (comp) {
-          parsed.computed = {
-            computedAnswerDescription: `Estimated total time to read file (assuming random sectors)`,
-            computedAnswerSeconds: comp.approxTotalSeconds
-          };
-        } else {
-          parsed.computed = null;
-        }
-      }
-
-      // If options were present but no answerKey, and computedAnswerSeconds is numeric,
-      // try match to closest numeric option (if options contain numeric value or seconds)
-      if ((!parsed.answerKey || parsed.answerKey === null) && parsed.options && parsed.computed && parsed.computed.computedAnswerSeconds) {
-        const cs = parsed.computed.computedAnswerSeconds;
-        // try to parse numeric from options (if options are numbers or times)
-        let bestIdx = -1; let bestDiff = Infinity;
-        parsed.options.forEach((opt, idx) => {
-          const numMatch = String(opt.text).match(/([0-9]+(\.[0-9]+)?)/);
-          if (numMatch) {
-            const num = parseFloat(numMatch[1]);
-            const diff = Math.abs(num - cs);
-            if (diff < bestDiff) { bestDiff = diff; bestIdx = idx; }
-          }
-        });
-        if (bestIdx !== -1) {
-          parsed.answerKey = parsed.options[bestIdx].text;
-          parsed.options[bestIdx].isCorrect = true;
-        }
-      }
-
-      return parsed;
-    } catch (e) {
-      // fallback: extract first JSON block and try parse
-      const repaired = extractFirstJson(text);
-      const cleaned = repaired.replace(/,\s*([}\]])/g, "$1"); // remove trailing commas
-      const parsed = JSON.parse(cleaned);
-      // same local numeric fallback as above
-      if ((!parsed.numericFields || Object.keys(parsed.numericFields).length === 0) && parsed.questionText) {
-        parsed.numericFields = extractNumbersFromText(parsed.questionText);
-      }
-      if (!parsed.computed) {
-        const comp = computeDiskTotalSeconds({ ...parsed, ...parsed.numericFields });
-        if (comp) parsed.computed = { computedAnswerDescription: `Estimated total time to read file`, computedAnswerSeconds: comp.approxTotalSeconds};
-        else parsed.computed = null;
-      }
-      return parsed;
+      parsed = JSON.parse(text);
+    } catch {
+      const repaired = extractFirstJson(text).replace(/,\s*([}\]])/g, "$1");
+      parsed = JSON.parse(repaired);
     }
+
+    // If model returns an array, pick the first object
+    if (Array.isArray(parsed)) parsed = parsed[0] || {};
+
+    // Normalize shape & defaults
+    parsed.questionText = parsed.questionText || "";
+    parsed.options = Array.isArray(parsed.options) ? parsed.options.map(o => ({
+      text: typeof o?.text === "string" ? o.text : String(o ?? ""),
+      isCorrect: typeof o?.isCorrect === "boolean" ? o.isCorrect : null
+    })) : [];
+    parsed.difficulty = parsed.difficulty || "unknown";
+    parsed.tags = Array.isArray(parsed.tags) ? parsed.tags : [];
+    parsed.year = parsed.year || "unknown";
+    parsed.source = parsed.source || "Unknown";
+    parsed.answerKey = typeof parsed.answerKey === "string" ? parsed.answerKey : null;
+    parsed.formulas = Array.isArray(parsed.formulas) ? parsed.formulas : [];
+    parsed.solution = parsed.solution && typeof parsed.solution === "object"
+      ? {
+          steps: Array.isArray(parsed.solution.steps) ? parsed.solution.steps : [],
+          explanation: typeof parsed.solution.explanation === "string" ? parsed.solution.explanation : ""
+        }
+      : { steps: [], explanation: "" };
+    parsed.hint = parsed.hint || "";
+
+    // Generic numeric scrape (domain-agnostic)
+    parsed.quantities = extractQuantitiesFromText(parsed.questionText);
+
+    // No domain-specific auto-computation (kept generic)
+    parsed.computed = null;
+
+    return parsed;
   } catch (err) {
-    console.error("❌ Image parse error (genaiVision):", err.message || err);
+    console.error("❌ Image parse error (genaiVision):", err?.message || err);
     throw err;
   }
 }
